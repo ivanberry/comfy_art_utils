@@ -8,7 +8,7 @@ import folder_paths
 
 class URLImageLoader:
     """
-    A custom ComfyUI node that loads images from URLs with custom referer and user agent headers.
+    A ComfyUI node from Comfy Art Utils that loads images from URLs with custom referer and user agent headers.
     """
     
     @classmethod

@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Structure
 
-This is a ComfyUI custom nodes collection focused on image loading functionality:
+This is Comfy Art Utils, a ComfyUI custom nodes collection focused on art generation workflows and utilities:
 
 ```
-comfyui-custom-nodes/
+comfy_art_utils/
 ├── __init__.py              # Main entry point with node mappings
 ├── nodes/                   # Custom node implementations
-│   └── url_image_loader.py  # URL image loader with custom headers
+│   ├── url_image_loader.py  # URL image loader with custom headers
+│   └── minio_uploader.py    # MinIO S3 image upload/download nodes
 └── requirements.txt         # Python dependencies
 ```
 
@@ -33,6 +34,18 @@ Loads images from URLs with custom HTTP headers support:
 - **Output**: Image tensor in ComfyUI format
 - **Features**: Custom headers, error handling, RGB conversion, tensor formatting
 
+### MinioUploader (`nodes/minio_uploader.py`)
+Uploads images to MinIO S3-compatible storage:
+- **Inputs**: Images, MinIO endpoint, access key, secret key, bucket name, object name prefix
+- **Outputs**: MinIO URL, object name
+- **Features**: Batch upload support, automatic bucket creation, SHA256-based naming, PNG format
+
+### MinioImageLoader (`nodes/minio_uploader.py`)
+Downloads images from MinIO S3-compatible storage:
+- **Inputs**: MinIO endpoint, access key, secret key, bucket name, object name
+- **Outputs**: Image tensor, mask tensor
+- **Features**: Alpha channel mask extraction, RGB conversion, error handling
+
 ## Dependencies
 
 Key dependencies defined in `requirements.txt`:
@@ -40,6 +53,7 @@ Key dependencies defined in `requirements.txt`:
 - `Pillow>=8.0.0` - Image processing and format conversion
 - `torch>=1.9.0` - Tensor operations for ComfyUI compatibility
 - `numpy>=1.21.0` - Array operations
+- `minio>=7.0.0` - MinIO S3-compatible storage client
 
 ## Development Notes
 
