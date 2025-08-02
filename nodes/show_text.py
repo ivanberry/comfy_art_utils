@@ -6,38 +6,27 @@ class ShowText:
                 "text": ("STRING", {"forceInput": True}),
             },
             "hidden": {
-                "unique_id": "UNIQUE_ID",
-                "extra_pnginfo": "EXTRA_PNGINFO",
+                "prompt": "PROMPT", 
+                "extra_pnginfo": "EXTRA_PNGINFO"
             },
         }
 
-    INPUT_IS_LIST = True
     RETURN_TYPES = ("STRING",)
-    FUNCTION = "notify"
+    FUNCTION = "show_text"
     OUTPUT_NODE = True
-    OUTPUT_IS_LIST = (True,)
-
     CATEGORY = "ArtUtils/Text"
 
-    def notify(self, text, unique_id=None, extra_pnginfo=None):
-        if unique_id is not None and extra_pnginfo is not None:
-            if not isinstance(extra_pnginfo, list):
-                print("Error: extra_pnginfo is not a list")
-            elif (
-                not isinstance(extra_pnginfo[0], dict)
-                or "workflow" not in extra_pnginfo[0]
-            ):
-                print("Error: extra_pnginfo[0] is not a dict or missing 'workflow' key")
-            else:
-                workflow = extra_pnginfo[0]["workflow"]
-                node = next(
-                    (x for x in workflow["nodes"] if str(x["id"]) == str(unique_id[0])),
-                    None,
-                )
-                if node:
-                    node["widgets_values"] = [text]
-
-        return {"ui": {"text": text}, "result": (text,)}
+    def show_text(self, text, prompt=None, extra_pnginfo=None):
+        print(f"ShowText received: {text} (type: {type(text)})")
+        # Convert to string if not already
+        text_str = str(text) if text is not None else ""
+        
+        return {
+            "ui": {
+                "text": [text_str]
+            }, 
+            "result": (text_str,)
+        }
 
 
 NODE_CLASS_MAPPINGS = {
