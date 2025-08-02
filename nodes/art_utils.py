@@ -272,7 +272,7 @@ class ArtUtils_URLImageLoader:
     
     def load_from_urls(self, urls, timeout, user_agent):
         import urllib.request
-        from urllib.parse import urlparse
+        from urllib.parse import urlparse, unquote, quote
         
         try:
             # Parse URLs (one per line)
@@ -291,18 +291,34 @@ class ArtUtils_URLImageLoader:
             temp_images = []
             for i, url in enumerate(url_list):
                 try:
-                    # Validate URL
-                    parsed = urlparse(url)
-                    if not parsed.scheme or not parsed.netloc:
-                        print(f"[ArtUtils] Invalid URL: {url}")
-                        continue
+                    # Use minimal headers like curl/wget
+                    if 'aliyuncs.com' in url:
+                        headers = {
+                            'User-Agent': 'ArtUtils/1.0',
+                            'Accept': '*/*'
+                        }
+                    elif 'dianxiaomi.com' in url:
+                        headers = {
+                            'User-Agent': user_agent,
+                            'Referer': 'https://www.dianxiaomi.com/'
+                        }
+                    else:
+                        headers = {
+                            'User-Agent': user_agent,
+                            'Accept': '*/*'
+                        }
                     
-                    # Create request with headers
-                    req = urllib.request.Request(url, headers={'User-Agent': user_agent})
+                    # Create request directly with the URL as-is
+                    req = urllib.request.Request(url, headers=headers)
                     
                     # Download image
                     with urllib.request.urlopen(req, timeout=timeout) as response:
                         image_data = response.read()
+                    
+                    # Validate image data
+                    if len(image_data) == 0:
+                        print(f"[ArtUtils ERROR] Empty response for {url}")
+                        continue
                     
                     # Convert to PIL Image
                     img = Image.open(io.BytesIO(image_data))
@@ -313,10 +329,15 @@ class ArtUtils_URLImageLoader:
                     max_height = max(max_height, img.height)
                     
                     loaded_count += 1
-                    print(f"[ArtUtils] Loaded image {i+1}: {url} ({img.width}x{img.height})")
+                    print(f"[ArtUtils] Successfully loaded image {i+1}: {img.width}x{img.height}")
                     
                 except Exception as e:
                     print(f"[ArtUtils ERROR] Failed to load {url}: {e}")
+                    # Try to provide more specific error information
+                    if "HTTP Error" in str(e):
+                        print(f"[ArtUtils ERROR] HTTP Error details: {e}")
+                    elif "URLError" in str(e):
+                        print(f"[ArtUtils ERROR] Network error: {e}")
                     continue
             
             if not temp_images:
@@ -328,18 +349,31 @@ class ArtUtils_URLImageLoader:
                 if img.width != max_width or img.height != max_height:
                     img = img.resize((max_width, max_height), Image.Resampling.LANCZOS)
                 
-                # Process image tensor
-                image_rgb = img.convert("RGB")
-                image_np = np.array(image_rgb).astype(np.float32) / 255.0
-                image_tensor = torch.from_numpy(image_np)[None,]
-                images.append(image_tensor)
-                
-                # Process mask
+                # Process image - ComfyUI requires RGB tensors
                 if 'A' in img.getbands():
-                    mask_np = np.array(img.getchannel('A')).astype(np.float32) / 255.0
+                    # For RGBA: preserve transparency properly
+                    image_rgba = img.convert("RGBA")
+                    
+                    # Create RGB image with transparency preserved
+                    image_rgb = Image.new("RGB", image_rgba.size, (255, 255, 255))  # White background
+                    image_rgb.paste(image_rgba, mask=image_rgba.split()[3])
+                    
+                    image_np = np.array(image_rgb).astype(np.float32) / 255.0
+                    image_tensor = torch.from_numpy(image_np)[None,]  # Shape: [1, H, W, 3]
+                    
+                    # Extract alpha as mask
+                    mask_np = np.array(image_rgba.split()[3]).astype(np.float32) / 255.0
                     mask_tensor = torch.from_numpy(mask_np)[None,]
                 else:
-                    mask_tensor = torch.ones((1, max_height, max_width), dtype=torch.float32)
+                    # For RGB: process normally
+                    image_rgb = img.convert("RGB")
+                    image_np = np.array(image_rgb).astype(np.float32) / 255.0
+                    image_tensor = torch.from_numpy(image_np)[None,]  # Shape: [1, H, W, 3]
+                    
+                    # Create full opacity mask
+                    mask_tensor = torch.ones((1, img.height, img.width), dtype=torch.float32)
+                    
+                images.append(image_tensor)
                 masks.append(mask_tensor)
             
             # Combine all images and masks

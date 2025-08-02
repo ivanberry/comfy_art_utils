@@ -1,4 +1,18 @@
-requests>=2.25.0
-Pillow>=8.0.0
+# Core dependencies for ComfyUI compatibility
 torch>=1.9.0
 numpy>=1.21.0
+Pillow>=8.0.0
+
+# HTTP requests and URL handling
+requests>=2.25.0
+
+# Alibaba Cloud OSS storage client
+oss2>=2.18.0
+
+# AI/ML model dependencies for QwenVL nodes
+transformers>=4.37.0
+bitsandbytes>=0.41.0
+qwen-vl-utils>=0.0.8
+
+# Additional utilities used in nodes
+folder_paths
