@@ -12,24 +12,45 @@ class QwenVLModelLoader:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "model_path": ("STRING", {"default": "Qwen/Qwen2.5-VL-7B-Instruct"}),
+                "model": (
+                    [
+                        "Qwen/Qwen2.5-VL-3B-Instruct",
+                        "Qwen/Qwen2.5-VL-3B-Instruct-AWQ",
+                        "Qwen/Qwen2.5-VL-7B-Instruct",
+                        "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
+                    ],
+                    {"default": "Qwen/Qwen2.5-VL-7B-Instruct"},
+                ),
                 "quantization": (["none", "4bit", "8bit"], {"default": "8bit"}),
             },
         }
 
     RETURN_TYPES = ("QWEN_MODEL",)
     FUNCTION = "load_model"
-    CATEGORY = "Qwen2.5-VL/Simplified"
+    CATEGORY = "ArtUtils/VL"
 
-    def load_model(self, model_path, quantization):
-        if quantization == "4bit":
-            quantization_config = BitsAndBytesConfig(load_in_4bit=True)
-        elif quantization == "8bit":
-            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-        else:
+    def load_model(self, model, quantization):
+        model_directory = os.path.join(folder_paths.models_dir, "VLM")
+        model_name = model.rsplit("/", 1)[-1]
+        model_path = os.path.join(model_directory, model_name)
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model not found at {model_path}. Please download first using the original DownloadAndLoadQwen2_5_VLModel node.")
+        
+        # For AWQ models, ignore quantization setting (already pre-quantized)
+        if "AWQ" in model:
+            print(f"Loading AWQ model (pre-quantized): {model}")
             quantization_config = None
+        else:
+            # Apply quantization for non-AWQ models
+            if quantization == "4bit":
+                quantization_config = BitsAndBytesConfig(load_in_4bit=True)
+            elif quantization == "8bit":
+                quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+            else:
+                quantization_config = None
 
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        model_obj = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_path,
             torch_dtype="auto",
             device_map="auto",
@@ -39,7 +60,7 @@ class QwenVLModelLoader:
         
         processor = AutoProcessor.from_pretrained(model_path)
         
-        return ({"model": model, "processor": processor, "model_path": model_path},)
+        return ({"model": model_obj, "processor": processor, "model_path": model_path},)
 
 
 
@@ -59,10 +80,10 @@ class QwenVLInference:
             },
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("results",)
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("results", "boolean_list")
     FUNCTION = "process_batch"
-    CATEGORY = "Qwen2.5-VL/Simplified"
+    CATEGORY = "ArtUtils/VL"
 
     def process_batch(self, model, images, prompt, max_tokens, min_pixels, max_pixels):
         min_pixels = min_pixels * 28 * 28
@@ -72,13 +93,19 @@ class QwenVLInference:
         processor = model["processor"]
         
         results = []
+        boolean_results = []
+        
+        print(f"Processing {images.shape[0]} images")
         
         # Process each image in the batch
         for i in range(images.shape[0]):
             try:
+                print(f"Processing image {i+1}/{images.shape[0]}")
+                
                 # Convert tensor back to PIL Image
-                image_array = (images[i] * 255).astype(np.uint8)
+                image_array = (images[i] * 255).cpu().numpy().astype(np.uint8)
                 pil_image = Image.fromarray(image_array)
+                print(f"Image {i+1} converted to PIL, size: {pil_image.size}")
                 
                 # Prepare message content
                 content = [
@@ -97,11 +124,13 @@ class QwenVLInference:
                 text = processor.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
                 )
+                print(f"Image {i+1} chat template applied")
                 
                 # Process vision info
                 image_inputs, video_inputs, video_kwargs = process_vision_info(
                     messages, return_video_kwargs=True
                 )
+                print(f"Image {i+1} vision info processed")
                 
                 # Prepare inputs
                 inputs = processor(
@@ -113,6 +142,7 @@ class QwenVLInference:
                     **video_kwargs,
                 )
                 inputs = inputs.to(qwen_model.device)
+                print(f"Image {i+1} inputs prepared and moved to device")
                 
                 # Generate response
                 generated_ids = qwen_model.generate(**inputs, max_new_tokens=max_tokens)
@@ -127,12 +157,32 @@ class QwenVLInference:
                     clean_up_tokenization_spaces=False,
                 )
                 
-                results.append(f"Image {i+1}: {output_text[0]}")
+                result = output_text[0].strip()
+                print(f"Image {i+1} result: {result}")
+                
+                # Extract boolean from result
+                if "TRUE" in result.upper():
+                    boolean_results.append("TRUE")
+                elif "FALSE" in result.upper():
+                    boolean_results.append("FALSE")
+                else:
+                    boolean_results.append("UNKNOWN")
+                
+                results.append(f"Image {i+1}: {result}")
                 
             except Exception as e:
-                results.append(f"Image {i+1}: Error - {str(e)}")
+                error_msg = f"Image {i+1}: Error - {str(e)}"
+                print(error_msg)
+                results.append(error_msg)
+                boolean_results.append("ERROR")
         
-        return ("\n\n".join(results),)
+        final_result = "\n\n".join(results)
+        boolean_list = str(boolean_results)  # Convert to string like [TRUE, FALSE, TRUE]
+        
+        print(f"Final combined result: {final_result}")
+        print(f"Boolean list: {boolean_list}")
+        
+        return (final_result, boolean_list)
 
 
 
@@ -144,6 +194,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "QwenVLModelLoader": "Qwen2.5-VL Model Loader",
-    "QwenVLInference": "Qwen2.5-VL Inference",
+    "QwenVLModelLoader": "Qwen VL Model Loader",
+    "QwenVLInference": "Qwen VL Inference",
 }
