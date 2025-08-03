@@ -44,7 +44,24 @@ try:
 except Exception as e:
     print(f"[ComfyArtUtils] Failed to load Show Text: {e}")
 
+try:
+    from .nodes.image_otptimizer import NODE_CLASS_MAPPINGS as IMAGE_OPTIMIZER_MAPPINGS
+    from .nodes.image_otptimizer import NODE_DISPLAY_NAME_MAPPINGS as IMAGE_OPTIMIZER_DISPLAY_MAPPINGS
+    NODE_CLASS_MAPPINGS.update(IMAGE_OPTIMIZER_MAPPINGS)
+    NODE_DISPLAY_NAME_MAPPINGS.update(IMAGE_OPTIMIZER_DISPLAY_MAPPINGS)
+    print("[ComfyArtUtils] Loaded Image Optimizer")
+except Exception as e:
+    print(f"[ComfyArtUtils] Failed to load Image Optimizer: {e}")
+
 # Import optional nodes (require additional dependencies)
+try:
+    from .nodes.LLM_Importer import NODE_CLASS_MAPPINGS as LLM_IMPORTER_MAPPINGS
+    from .nodes.LLM_Importer import NODE_DISPLAY_NAME_MAPPINGS as LLM_IMPORTER_DISPLAY_MAPPINGS
+    NODE_CLASS_MAPPINGS.update(LLM_IMPORTER_MAPPINGS)
+    NODE_DISPLAY_NAME_MAPPINGS.update(LLM_IMPORTER_DISPLAY_MAPPINGS)
+    print("[ComfyArtUtils] Loaded LLM Importer")
+except Exception as e:
+    print(f"[ComfyArtUtils] Failed to load LLM Importer (missing transformers?): {e}")
 try:
     from .nodes.oss_uploader import NODE_CLASS_MAPPINGS as OSS_UPLOADER_MAPPINGS
     from .nodes.oss_uploader import NODE_DISPLAY_NAME_MAPPINGS as OSS_UPLOADER_DISPLAY_MAPPINGS
