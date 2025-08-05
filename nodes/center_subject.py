@@ -1,5 +1,5 @@
 """
-Center Subject Node for ComfyUI - Simple and Direct Approach
+Center Subject Node for ComfyUI - Enhanced with Largest Object Detection v2.0
 """
 
 import torch
@@ -15,8 +15,10 @@ class CenterSubject:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "method": (["contour", "threshold"], {"default": "contour"}),
+                "method": (["contour", "threshold", "largest_object"], {"default": "largest_object"}),
                 "threshold": ("INT", {"default": 240, "min": 0, "max": 255}),
+                "min_area": ("INT", {"default": 1000, "min": 100, "max": 50000}),
+                "debug": ("BOOLEAN", {"default": False}),
             }
         }
     
@@ -25,7 +27,7 @@ class CenterSubject:
     FUNCTION = "center_subject"
     CATEGORY = "Image/Transform"
     
-    def find_subject_contour(self, image_cv):
+    def find_subject_contour(self, image_cv, min_area=1000):
         """使用轮廓检测找到主体"""
         gray = cv2.cvtColor(image_cv, cv2.COLOR_RGB2GRAY)
         _, binary = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
@@ -35,8 +37,12 @@ class CenterSubject:
         if not contours:
             return None
             
-        # 找到最大轮廓
-        largest_contour = max(contours, key=cv2.contourArea)
+        # 过滤太小的轮廓，找到最大的有效轮廓
+        valid_contours = [c for c in contours if cv2.contourArea(c) >= min_area]
+        if not valid_contours:
+            return None
+            
+        largest_contour = max(valid_contours, key=cv2.contourArea)
         return cv2.boundingRect(largest_contour)
     
     def find_subject_threshold(self, image_cv, threshold):
@@ -53,7 +59,44 @@ class CenterSubject:
         
         return (x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)
     
-    def center_subject(self, images, method, threshold):
+    def find_largest_object(self, image_cv, threshold=240, min_area=1000):
+        """找到最大的非白色连通区域"""
+        gray = cv2.cvtColor(image_cv, cv2.COLOR_RGB2GRAY)
+        _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)
+        
+        # 形态学操作去除噪声
+        kernel = np.ones((3,3), np.uint8)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+        
+        # 找连通区域
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        
+        if num_labels <= 1:  # 只有背景
+            return None
+        
+        # 找最大的连通区域（排除背景）
+        largest_area = 0
+        largest_idx = -1
+        
+        for i in range(1, num_labels):  # 跳过背景(0)
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area >= min_area and area > largest_area:
+                largest_area = area
+                largest_idx = i
+        
+        if largest_idx == -1:
+            return None
+            
+        # 返回边界框
+        x = stats[largest_idx, cv2.CC_STAT_LEFT]
+        y = stats[largest_idx, cv2.CC_STAT_TOP]
+        w = stats[largest_idx, cv2.CC_STAT_WIDTH]
+        h = stats[largest_idx, cv2.CC_STAT_HEIGHT]
+        
+        return (x, y, w, h)
+    
+    def center_subject(self, images, method, threshold, min_area, debug):
         try:
             centered_images = []
             info_list = []
@@ -66,7 +109,9 @@ class CenterSubject:
                 
                 # 检测主体位置
                 if method == "contour":
-                    bbox = self.find_subject_contour(image_cv)
+                    bbox = self.find_subject_contour(image_cv, min_area)
+                elif method == "largest_object":
+                    bbox = self.find_largest_object(image_cv, threshold, min_area)
                 else:
                     bbox = self.find_subject_threshold(image_cv, threshold)
                 
@@ -106,7 +151,10 @@ class CenterSubject:
                 centered_tensor = torch.from_numpy(centered_image.astype(np.float32) / 255.0)[None,]
                 centered_images.append(centered_tensor)
                 
-                info_list.append(f"Image {i+1}: Offset ({offset_x}, {offset_y}), Subject at ({subject_center_x}, {subject_center_y})")
+                info_text = f"Image {i+1}: Method={method}, BBox=({x},{y},{bbox_w},{bbox_h}), SubjectCenter=({subject_center_x},{subject_center_y}), Offset=({offset_x},{offset_y})"
+                if debug:
+                    info_text += f", Area={bbox_w*bbox_h}"
+                info_list.append(info_text)
             
             result_images = torch.cat(centered_images, dim=0)
             return (result_images, "; ".join(info_list))
@@ -121,5 +169,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "CenterSubject": "🎯 Center Subject",
+    "CenterSubject": "🎯 Center Subject v2",
 }
