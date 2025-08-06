@@ -80,6 +80,15 @@ try:
 except Exception as e:
     print(f"[ComfyArtUtils] Failed to load Qwen VL (missing dependencies?): {e}")
 
+try:
+    from .nodes.compare_images import NODE_CLASS_MAPPINGS as COMPARE_IMAGES_MAPPINGS
+    from .nodes.compare_images import NODE_DISPLAY_NAME_MAPPINGS as COMPARE_IMAGES_DISPLAY_MAPPINGS
+    NODE_CLASS_MAPPINGS.update(COMPARE_IMAGES_MAPPINGS)
+    NODE_DISPLAY_NAME_MAPPINGS.update(COMPARE_IMAGES_DISPLAY_MAPPINGS)
+    print("[ComfyArtUtils] Loaded Compare Images")
+except Exception as e:
+    print(f"[ComfyArtUtils] Failed to load Compare Images: {e}")
+
 print(f"[ComfyArtUtils] Successfully loaded {len(NODE_CLASS_MAPPINGS)} nodes")
 
 # Export for ComfyUI
