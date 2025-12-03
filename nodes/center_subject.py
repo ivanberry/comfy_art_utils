@@ -4,7 +4,6 @@ Center Subject Node for ComfyUI - Enhanced with Largest Object Detection v2.0
 
 import torch
 import numpy as np
-from PIL import Image
 import cv2
 
 class CenterSubject:
@@ -27,6 +26,20 @@ class CenterSubject:
     FUNCTION = "center_subject"
     CATEGORY = "Image/Transform"
     
+    def _mask_info_from_bool(self, mask: np.ndarray, min_area: int):
+        """Given a boolean mask, return bbox, centroid and area if it meets min_area."""
+        area = int(mask.sum())
+        if area < min_area:
+            return None
+        
+        coords = np.column_stack(np.nonzero(mask))
+        y_min, x_min = coords.min(axis=0)
+        y_max, x_max = coords.max(axis=0)
+        
+        bbox = (int(x_min), int(y_min), int(x_max - x_min + 1), int(y_max - y_min + 1))
+        centroid_y, centroid_x = coords.mean(axis=0)
+        return mask, bbox, (float(centroid_x), float(centroid_y)), area
+    
     def find_subject_contour(self, image_cv, min_area=1000):
         """使用轮廓检测找到主体"""
         gray = cv2.cvtColor(image_cv, cv2.COLOR_RGB2GRAY)
@@ -43,21 +56,32 @@ class CenterSubject:
             return None
             
         largest_contour = max(valid_contours, key=cv2.contourArea)
-        return cv2.boundingRect(largest_contour)
+        
+        # 计算掩码和质心，质心比bbox中心更稳定
+        mask = np.zeros_like(gray, dtype=np.uint8)
+        cv2.drawContours(mask, [largest_contour], -1, 1, cv2.FILLED)
+        
+        moments = cv2.moments(largest_contour)
+        if moments["m00"] != 0:
+            cx = moments["m10"] / moments["m00"]
+            cy = moments["m01"] / moments["m00"]
+        else:
+            x, y, w, h = cv2.boundingRect(largest_contour)
+            cx = x + (w - 1) / 2.0
+            cy = y + (h - 1) / 2.0
+        
+        x, y, w, h = cv2.boundingRect(largest_contour)
+        return (mask.astype(bool), (x, y, w, h), (float(cx), float(cy)), int(cv2.contourArea(largest_contour)))
     
-    def find_subject_threshold(self, image_cv, threshold):
+    def find_subject_threshold(self, image_cv, threshold, min_area=1):
         """使用阈值检测找到主体"""
         gray = cv2.cvtColor(image_cv, cv2.COLOR_RGB2GRAY)
         mask = gray < threshold
         
         if not np.any(mask):
             return None
-            
-        coords = np.where(mask)
-        y_min, y_max = coords[0].min(), coords[0].max()
-        x_min, x_max = coords[1].min(), coords[1].max()
         
-        return (x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)
+        return self._mask_info_from_bool(mask, min_area)
     
     def find_largest_object(self, image_cv, threshold=240, min_area=1000):
         """找到最大的非白色连通区域"""
@@ -94,7 +118,9 @@ class CenterSubject:
         w = stats[largest_idx, cv2.CC_STAT_WIDTH]
         h = stats[largest_idx, cv2.CC_STAT_HEIGHT]
         
-        return (x, y, w, h)
+        mask = labels == largest_idx
+        centroid = centroids[largest_idx]  # (x, y)
+        return (mask, (x, y, w, h), (float(centroid[0]), float(centroid[1])), int(largest_area))
     
     def center_subject(self, images, method, threshold, min_area, debug):
         try:
@@ -113,47 +139,42 @@ class CenterSubject:
                 elif method == "largest_object":
                     bbox = self.find_largest_object(image_cv, threshold, min_area)
                 else:
-                    bbox = self.find_subject_threshold(image_cv, threshold)
+                    bbox = self.find_subject_threshold(image_cv, threshold, min_area)
                 
                 if bbox is None:
                     info_list.append(f"Image {i+1}: No subject found")
                     centered_images.append(image_tensor)
                     continue
                 
-                x, y, bbox_w, bbox_h = bbox
+                _mask, (x, y, bbox_w, bbox_h), (cx, cy), area = bbox
                 
-                # 计算主体中心和画布中心的偏移
-                subject_center_x = x + bbox_w // 2
-                subject_center_y = y + bbox_h // 2
-                canvas_center_x = w // 2
-                canvas_center_y = h // 2
+                # 计算主体中心和画布中心的偏移（使用质心更稳定）
+                canvas_center_x = (w - 1) / 2.0
+                canvas_center_y = (h - 1) / 2.0
                 
-                offset_x = canvas_center_x - subject_center_x
-                offset_y = canvas_center_y - subject_center_y
+                offset_x = canvas_center_x - cx
+                offset_y = canvas_center_y - cy
                 
-                # 创建白色背景
-                centered_image = np.full_like(image_cv, 255)
-                
-                # 计算源图像和目标位置
-                src_x1, src_y1 = max(0, -offset_x), max(0, -offset_y)
-                src_x2, src_y2 = min(w, w - offset_x), min(h, h - offset_y)
-                dst_x1, dst_y1 = max(0, offset_x), max(0, offset_y)
-                dst_x2, dst_y2 = dst_x1 + (src_x2 - src_x1), dst_y1 + (src_y2 - src_y1)
-                
-                # 只复制非白色区域
-                src_region = image_cv[src_y1:src_y2, src_x1:src_x2]
-                mask = np.all(src_region >= 240, axis=2)  # 白色区域掩码
-                
-                # 复制非白色像素
-                centered_image[dst_y1:dst_y2, dst_x1:dst_x2][~mask] = src_region[~mask]
+                # 平移整张图，边界填充白色，减少局部复制带来的像素误差
+                transform = np.float32([[1, 0, offset_x], [0, 1, offset_y]])
+                centered_image = cv2.warpAffine(
+                    image_cv,
+                    transform,
+                    (w, h),
+                    flags=cv2.INTER_NEAREST,
+                    borderValue=(255, 255, 255),
+                )
                 
                 # 转换回tensor
                 centered_tensor = torch.from_numpy(centered_image.astype(np.float32) / 255.0)[None,]
                 centered_images.append(centered_tensor)
                 
-                info_text = f"Image {i+1}: Method={method}, BBox=({x},{y},{bbox_w},{bbox_h}), SubjectCenter=({subject_center_x},{subject_center_y}), Offset=({offset_x},{offset_y})"
+                info_text = (
+                    f"Image {i+1}: Method={method}, BBox=({x},{y},{bbox_w},{bbox_h}), "
+                    f"Centroid=({cx:.2f},{cy:.2f}), Offset=({offset_x:.2f},{offset_y:.2f})"
+                )
                 if debug:
-                    info_text += f", Area={bbox_w*bbox_h}"
+                    info_text += f", Area={area}"
                 info_list.append(info_text)
             
             result_images = torch.cat(centered_images, dim=0)
